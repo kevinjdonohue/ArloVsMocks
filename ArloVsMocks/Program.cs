@@ -1,82 +1,113 @@
-﻿using System;
-using System.Linq;
-using ArloVsMocks.Data;
+﻿using ArloVsMocks.Data;
 
-namespace ArloVsMocks
+namespace ArloVsMocks;
+
+class Program
 {
-    class Program
+    static void Main(string[] args)
     {
-        static void Main(string[] args)
+        var arguments = ParseInput(args);
+
+        var db = new MovieReviewEntities();
+        try
         {
-            //parse input
-            int movieId;
-            int criticId;
-            int stars;
-            try
+            CreateOrUpdateNewRating(db, arguments);
+            UpdateCriticRating(db);
+            RecalculateWeights(db);
+
+            db.SaveChanges();
+
+            PrintSummary(GetSummary(db, arguments));
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(ex.Message);
+        }
+        finally
+        {
+            db.Dispose();
+        }
+
+        Console.ReadKey();
+    }
+
+    private static void CreateOrUpdateNewRating(MovieReviewEntities db, CliArguments arguments)
+    {
+        var existingRating =
+            db.Ratings.SingleOrDefault(r => r.MovieId == arguments.MovieId && r.CriticId == arguments.CriticId);
+        if (existingRating == null)
+        {
+            existingRating = new Rating { MovieId = arguments.MovieId, CriticId = arguments.CriticId };
+            db.Ratings.Add(existingRating);
+        }
+
+        existingRating.Stars = arguments.Stars;
+    }
+
+    private static void UpdateCriticRating(MovieReviewEntities db)
+    {
+        var criticsHavingRated = db.Critics.Where(c => c.Ratings.Count > 0);
+        foreach (var critic in criticsHavingRated)
+        {
+            var ratingsWithAverages = critic.Ratings.Where(r => r.Movie.AverageRating.HasValue).ToList();
+            var totalDisparity = ratingsWithAverages.Sum(r => Math.Abs(r.Stars - r.Movie.AverageRating!.Value));
+            var relativeDisparity = totalDisparity / ratingsWithAverages.Count;
+
+            critic.RatingWeight = CalculateRatingWeightByDisparity(relativeDisparity);
+        }
+
+        double CalculateRatingWeightByDisparity(double disparity)
+        {
+            return disparity switch
             {
-                movieId = Int32.Parse(args[0]);
-                criticId = Int32.Parse(args[1]);
-                stars = Int32.Parse(args[2]);
-            }
-            catch(Exception ex)
-            {
-                Console.WriteLine(ex.Message);
-                return;
-            }
+                > 2 => 0.15,
+                > 1 => 0.33,
+                _ => 1.0
+            };
+        }
+    }
 
-            //process rating
-            MovieReviewEntities db = null;
-            try
-            {               
-                db = new MovieReviewEntities();
-               
-                //insert or update new rating
-                var existingRating = db.Ratings.SingleOrDefault(r => r.MovieId == movieId && r.CriticId == criticId);
-                if (existingRating == null)
-                {
-                    existingRating = new Rating {MovieId = movieId, CriticId = criticId};
-                    db.Ratings.Add(existingRating);
-                }
-                existingRating.Stars = stars;
-                               
-                //update critic rating weight according to how closely their ratings match the average rating
-                var criticsHavingRated = db.Critics.Where(c => c.Ratings.Count > 0);
-                foreach (var critic in criticsHavingRated)
-                {
-                    var ratingsWithAverages = critic.Ratings.Where(r => r.Movie.AverageRating.HasValue).ToList();
-                    var totalDisparity = ratingsWithAverages.Sum(r => Math.Abs(r.Stars - r.Movie.AverageRating.Value));
-                    var relativeDisparity = totalDisparity / ratingsWithAverages.Count;
+    private static void RecalculateWeights(MovieReviewEntities db)
+    {
+        foreach (var movie in db.Movies)
+        {
+            var weightTotal = movie.Ratings.Select(r => r.Critic.RatingWeight).Sum();
+            var ratingTotal = movie.Ratings.Select(r => r.Stars * r.Critic.RatingWeight).Sum();
 
-                    critic.RatingWeight = relativeDisparity > 2 ? 0.15 : relativeDisparity > 1 ? 0.33 : 1.0;
-                }
+            movie.AverageRating = ratingTotal / weightTotal;
+        }
+    }
 
-                //re-calculate weighted average of all movie ratings
-                foreach (var movie in db.Movies)
-                {
-                    var weightTotal = movie.Ratings.Select(r => r.Critic.RatingWeight).Sum();
-                    var ratingTotal = movie.Ratings.Select(r => r.Stars * r.Critic.RatingWeight).Sum();
+    private static Summary GetSummary(MovieReviewEntities db, CliArguments arguments)
+    {
+        var newCriticRatingWeight = db.Critics.Single(c => c.Id == arguments.CriticId).RatingWeight;
+        var newMovieRating = db.Movies.Single(m => m.Id == arguments.MovieId).AverageRating!.Value;
 
-                    movie.AverageRating = ratingTotal / weightTotal;
-                }
+        return new Summary(newCriticRatingWeight, newMovieRating);
+    }
 
-                db.SaveChanges();
-                
-                //output summary
-                var newCriticRatingWeight = db.Critics.Single(c => c.Id == criticId).RatingWeight;
-                var newMovieRating = db.Movies.Single(m => m.Id == movieId).AverageRating.Value;
-                Console.WriteLine("New critic rating weight: {0:N1}", newCriticRatingWeight);
-                Console.WriteLine("New movie rating: {0:N1}", newMovieRating);
-            }
-            catch(Exception ex)
-            {
-                Console.WriteLine(ex.Message);
-            }
-            finally
-            {
-                if (db != null) db.Dispose();
-            }
+    private static void PrintSummary(Summary summary)
+    {
+        Console.WriteLine("New critic rating weight: {0:N1}", summary.NewCriticRatingWeight);
+        Console.WriteLine("New movie rating: {0:N1}", summary.NewMovieRating);
+    }
 
-            Console.ReadKey();
+    private static CliArguments ParseInput(string[] args)
+    {
+        if (args.Length != 3)
+        {
+            Console.WriteLine(
+                $"Must be 3 int arguments: {nameof(CliArguments.MovieId)}, {nameof(CliArguments.CriticId)}, {nameof(CliArguments.Stars)}");
+        }
+
+        try
+        {
+            return new CliArguments(int.Parse(args[0]), int.Parse(args[1]), int.Parse(args[2]));
+        }
+        catch (Exception e)
+        {
+            Console.WriteLine(e.Message);
+            throw;
         }
     }
 }
