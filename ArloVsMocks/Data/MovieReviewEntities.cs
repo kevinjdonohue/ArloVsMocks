@@ -1,9 +1,6 @@
-﻿using System.Collections.Generic;
-using System.Collections.Specialized;
-using System.ComponentModel.DataAnnotations;
-using System.Data.Entity;
-using System.Data.Entity.Infrastructure;
-using System.Linq;
+﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
+using Microsoft.EntityFrameworkCore;
 
 namespace ArloVsMocks.Data
 {
@@ -43,25 +40,18 @@ namespace ArloVsMocks.Data
 
     public class MovieReviewEntities : DbContext
     {
-        public MovieReviewEntities()
-            : base(new SqlCeConnectionFactory("System.Data.SqlServerCe.3.5").CreateConnection("Data/MovieReviews"), true)
-        {
-        }
-        
         public DbSet<Movie> Movies { get; set; }
         public DbSet<Critic> Critics { get; set; }
         public DbSet<Rating> Ratings { get; set; }
 
-        protected override void OnModelCreating(DbModelBuilder modelBuilder)
+        
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             modelBuilder.Entity<Movie>()
-                .HasMany(m => m.Ratings)
-                .WithRequired(r => r.Movie);
+                .HasMany(m => m.Ratings);
 
             modelBuilder.Entity<Critic>()
-                .HasMany(c => c.Ratings)
-                .WithRequired(r => r.Critic);
-
+                .HasMany(c => c.Ratings);
 
 
             base.OnModelCreating(modelBuilder);
